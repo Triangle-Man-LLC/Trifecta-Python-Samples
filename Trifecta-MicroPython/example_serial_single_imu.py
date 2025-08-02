@@ -10,28 +10,35 @@
 """
 
 import time
-from fs_trifecta_mp import FsDevice, FsImuCompositePacket
+from fs_trifecta_mp import FsDevice
 
-# For micropython, it is good to wait for a bit before starting to avoid bricking your device by accident
-# That way you can CTRL + C out of it
+# For micropython, it is good to wait for a bit before starting to avoid soft-bricking your device by accident,
+# that way you can CTRL + C out of it.
 time.sleep(2) 
 
-# Create a new device handle(self, uart_id, tx_pin, rx_pin)
+# Create a new device handle(self, uart_id, tx_pin, rx_pin).
+# Set the tx_pin and rx_pin to the actual pins on your device.
 imu = FsDevice(uart_id = 1, tx_pin = 18, rx_pin = 26)
 
-# While FsDevice.fs_identify_device() is false, wait 100 ms and call the function again
+# While FsDevice.fs_identify_device() is false, wait 100 ms and call the function again.
 initialized = False
 while(not initialized):
     print(f'Waiting for IMU connection!')
     initialized = (imu.fs_identify_device() != 0)
-    time.sleep(0.05)
+    time.sleep(0.05)   
+    if(initialized):
+        print(f'Successfully connected on to IMU!')
+        imu.fs_set_stream_state(True) # Start streaming
+        break  # Exit the loop once successful
 
-# Then, enter a main loop which calls FsDevice.
+# Then, enter a main loop which reads IMU data.
+counter = 0
 while(True):
-    imu.fs_read_oneshot()
+    imu.fs_handle_receive_buffer()
     print(f'IMU Data - Time: {imu.packet.time}, Quaternion: ({imu.packet.q0},{imu.packet.q1},{imu.packet.q2},{imu.packet.q3}), Euler: ({imu.packet.roll}, {imu.packet.pitch}, {imu.packet.yaw})\r')
-        
+    if (counter % 1000 == 0):
+        imu.fs_set_stream_state(True) # [Optional] Send a keepalive signal in case the IMU cable was unplugged etc.
+    counter+=1
     # Handle your other tasks here e.g. read from other sensors, GPIO, etc.
 
-    time.sleep(0.001) # Sleep for 1 ms to prevent CPU overloading
-
+    time.sleep(0.001) # Sleep for 1 ms to prevent CPU overloading.

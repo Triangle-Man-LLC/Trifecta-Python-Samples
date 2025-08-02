@@ -87,7 +87,30 @@ class FsDevice:
         if self.fs_device_parse_packet(response) is not 0:
             return False
         return self.name is not "Unknown"
+    
+    @micropython.native
+    def fs_set_stream_state(self, do_stream):
+        """
+            Sends the stream command over UART and waits for a response.
+            :param do_stream: True to start stream, False to stop stream
+            Return: True if data was processed, upon which it will update the object's state.
+        """
+        if do_stream:
+            command = bytearray([FS_COMMAND_STREAM, ord('1'), FS_SERIAL_COMMAND_TERMINATOR])
+        else:
+            command = bytearray([FS_COMMAND_STREAM, ord('0'), FS_SERIAL_COMMAND_TERMINATOR])
+        self.uart.write(command)
 
+    @micropython.native
+    def fs_handle_receive_buffer(self):
+        """
+            Checks the receive buffer and handles packets as necessary.
+        """
+        response = self.uart.read(FS_MAX_DATA_LENGTH)
+        if response is not None:
+            self.fs_device_parse_packet(response)
+  
+    @micropython.native
     def fs_read_oneshot(self):
         """
         Sends the read command over UART and waits for a response.
@@ -95,16 +118,16 @@ class FsDevice:
         """
         command = bytearray([FS_COMMAND_STREAM, ord('2'), FS_SERIAL_COMMAND_TERMINATOR])
         self.uart.write(command)
-        response = self.uart.read()
-        if(response is not None):
-            self.fs_device_parse_packet(response)
+        self.fs_handle_receive_buffer()
 
+    @micropython.native
     def fs_log_output(self, message, *args):
         """
         Alias for print()
         """
         print(message % args)
 
+    @micropython.native
     def fs_enqueue_into_command_queue(self, cmd_str):
         if len(self.command_queue) >= FS_MAX_COMMAND_LENGTH:
             self.fs_log_output("[Trifecta] Device command queue was full!")

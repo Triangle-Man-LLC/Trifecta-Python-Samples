@@ -73,12 +73,34 @@ class FsDevice:
         """
         command = bytearray([FS_COMMAND_IDENTIFY, ord('0'), FS_SERIAL_COMMAND_TERMINATOR])
         self.uart.write(command)
-        response = self.uart.read(FS_MAX_DATA_LENGTH)
+        response = self.uart.read(FS_MAX_DATA_LENGTH, )
         if not response:
             return False
         if self.fs_device_parse_packet(response) != 0:
             return False
         return self.name != "Unknown"
+
+    def fs_set_stream_state(self, do_stream):
+        if do_stream:
+            command = bytearray([FS_COMMAND_STREAM, ord('1'), FS_SERIAL_COMMAND_TERMINATOR])
+        else:
+            command = bytearray([FS_COMMAND_STREAM, ord('0'), FS_SERIAL_COMMAND_TERMINATOR])
+        try:
+          self.uart.write(command)
+        except serial.serialutil.SerialTimeoutException:
+          print(f'Timeout on {self.uart.port}, trying again later!')
+        except Exception as e:
+          print(f'Failed to read on {self.uart.port}: {e}')
+
+    def fs_handle_receive_buffer(self):
+        try:
+          response = self.uart.read(FS_MAX_DATA_LENGTH)
+          if response is not None:
+              self.fs_device_parse_packet(response)
+        except serial.serialutil.SerialTimeoutException:
+          print(f'Timeout on {self.uart.port}, trying again later!')
+        except Exception as e:
+          print(f'Failed to read on {self.uart.port}: {e}')
 
     def fs_read_oneshot(self):
         """
@@ -88,14 +110,11 @@ class FsDevice:
         command = bytearray([FS_COMMAND_STREAM, ord('2'), FS_SERIAL_COMMAND_TERMINATOR])
         try:
           self.uart.write(command)
-          response = self.uart.read(FS_MAX_DATA_LENGTH)
-          if response is not None:
-              self.fs_device_parse_packet(response)
+          self.fs_handle_receive_buffer()
         except serial.serialutil.SerialTimeoutException:
           print(f'Timeout on {self.uart.port}, trying again later!')
         except Exception as e:
           print(f'Failed to read on {self.uart.port}: {e}')
-          
 
     def fs_log_output(self, message, *args):
         """Alias for print()"""
@@ -171,45 +190,55 @@ class FsDevice:
         return len(packets)
 
     def fs_device_process_packets_serial(self, rx_buf):
-        scanner_state = 'S'
-        start_index = -1
+        # Combine with any leftover data from previous call
         data = self.last_data_string[:self.last_data_length] + rx_buf
         data_length = len(data)
-        self.last_data_length = 0  # Reset after processing
-
-        for index in range(data_length):
+        self.last_data_length = 0  # Reset leftover buffer
+        
+        index = 0
+        while index < data_length:
             current_char = data[index]
-            if scanner_state == 'S':
-                if current_char == FS_SERIAL_PACKET_HEADER:
-                    start_index = index
-                    scanner_state = 'P'
-                else:
-                    start_index = index
-                    scanner_state = 'C'
-
-            elif scanner_state == 'P':
-                if current_char == FS_SERIAL_PACKET_FOOTER:
-                    segment = data[start_index+1:index]
+            
+            # Packet mode (between header and footer)
+            if current_char == FS_SERIAL_PACKET_HEADER:
+                start_index = index
+                # Find matching footer
+                end_index = data.find(FS_SERIAL_PACKET_FOOTER, index + 1)
+                
+                if end_index != -1:
+                    # Process complete packet
+                    segment = data[start_index+1:end_index]
                     output_buf = bytearray(len(segment))
-                    decoded_len = self.fs_base64_decode(segment, output_buf)
-                    if decoded_len > 0:
-                        self.fs_update_most_recent_packet(output_buf) 
-                    scanner_state = 'S'
-                elif index == data_length - 1:
+                    if self.fs_base64_decode(segment, output_buf) > 0:
+                        self.fs_update_most_recent_packet(output_buf)
+                    index = end_index + 1  # Skip past footer
+                    continue
+                else:
+                    # Incomplete packet, save for next call
                     self.last_data_string[:data_length - start_index] = data[start_index:]
                     self.last_data_length = data_length - start_index
-
-            elif scanner_state == 'C':
-                if current_char == FS_SERIAL_COMMAND_TERMINATOR:
-                    segment = data[start_index:index+1]
+                    break
+                    
+            # Command mode (until terminator)
+            elif current_char != FS_SERIAL_COMMAND_TERMINATOR:
+                start_index = index
+                # Find command terminator
+                end_index = data.find(FS_SERIAL_COMMAND_TERMINATOR, index + 1)
+                
+                if end_index != -1:
+                    # Process complete command
+                    segment = data[start_index:end_index+1]
                     self.fs_handle_received_commands(segment)
-                    scanner_state = 'S'
-                elif current_char == FS_SERIAL_PACKET_HEADER:
-                    start_index = index
-                    scanner_state = 'P'
-                elif index == data_length - 1:
+                    index = end_index + 1  # Skip past terminator
+                    continue
+                else:
+                    # Incomplete command, save for next call
                     self.last_data_string[:data_length - start_index] = data[start_index:]
                     self.last_data_length = data_length - start_index
+                    break
+                    
+            index += 1
+            
         return 0
 
     def fs_device_parse_packet(self, rx_buf):
