@@ -277,32 +277,66 @@ class FsImuCompositePacket:
         self.type = data[0]
         self.time = int.from_bytes(data[1:5], 'little')
 
-        indices = [
-            (5, 9), (9, 13), (13, 17), (17, 21), (21, 25), (25, 29),
-            (29, 33), (33, 37), (37, 41), (41, 45), (45, 49), (49, 53),
-            (53, 57), (57, 61), (61, 65), (65, 69), (69, 73), (73, 77),
-            (129, 131), (131, 133), (133, 135), (137, 141), (141, 145)
-        ]
+        if self.type in (0, 1, 2, 3):  # composite, 145 bytes
+            fmt = '<' + 'f'*18 + 'f'*4 + 'f'*3 + 'f'*3 + 'f'*3 + 'h'*3 + 'b' + 'b' + 'b'*3 + 'b' + 'i'
+            fields = struct.unpack(fmt, data[5:145])
 
-        values = [
-            'ax0', 'ay0', 'az0', 'gx0', 'gy0', 'gz0', 'ax1', 'ay1', 'az1',
-            'gx1', 'gy1', 'gz1', 'ax2', 'ay2', 'az2', 'gx2', 'gy2', 'gz2',
-            'grav_x', 'grav_y', 'grav_z', 'c', 'd'
-        ]
+            (
+                self.ax0, self.ay0, self.az0, self.gx0, self.gy0, self.gz0,
+                self.ax1, self.ay1, self.az1, self.gx1, self.gy1, self.gz1,
+                self.ax2, self.ay2, self.az2, self.gx2, self.gy2, self.gz2,
+                self.q0, self.q1, self.q2, self.q3,
+                self.ax, self.ay, self.az,
+                self.vx, self.vy, self.vz,
+                self.rx, self.ry, self.rz,
+                reserved0, reserved1, reserved2,
+                self.device_in_motion,
+                self.label_2,
+                temp0, temp1, temp2,
+                self.c,
+                self.d
+            ) = fields
 
-        for (start, end), attr in zip(indices, values):
-            byte_count = end - start
-            val = int.from_bytes(data[start:end], byteorder='little', signed=True)
-            setattr(self, attr, val)
+        elif self.type in (4, 5, 6, 7):  # regular, 85 bytes
+            fmt = '<' + 'f'*3 + 'f'*4 + 'f'*3 + 'f'*3 + 'f'*3 + 'h'*3 + 'b' + 'b' + 'b'*3 + 'b' + 'i'
+            fields = struct.unpack(fmt, data[5:85])
+            (
+                self.omega_x0, self.omega_y0, self.omega_z0,
+                self.q0, self.q1, self.q2, self.q3,
+                self.ax, self.ay, self.az,
+                self.vx, self.vy, self.vz,
+                self.rx, self.ry, self.rz,
+                reserved0, reserved1, reserved2,
+                self.device_in_motion,
+                self.label_2,
+                temp0, temp1, temp2,
+                self.c,
+                self.d
+            ) = fields
 
-        self.q0, self.q1, self.q2, self.q3 = struct.unpack('<ffff', data[77:93])
-        self.roll, self.pitch, self.yaw = self.fs_q_to_euler_angles(self.q0, self.q1, self.q2, self.q3, degrees=True)
-        
-        self.ax, self.ay, self.az = struct.unpack('<fff', data[93:105])
-        self.vx, self.vy, self.vz = struct.unpack('<fff', data[105:117])
-        self.rx, self.ry, self.rz = struct.unpack('<fff', data[117:129])
+        elif self.type in (8, 9, 10, 11):  # composite2, 157 bytes
+            fmt = '<' + 'f'*18 + 'f'*4 + 'f'*3 + 'f'*3 + 'f'*3 + 'h'*3 + 'b' + 'b' + 'b'*3 + 'b' + 'i'
+            fields = struct.unpack(fmt, data[5:157])
+            (
+                self.ax0, self.ay0, self.az0, self.gx0, self.gy0, self.gz0,
+                self.ax1, self.ay1, self.az1, self.gx1, self.gy1, self.gz1,
+                self.ax2, self.ay2, self.az2, self.gx2, self.gy2, self.gz2,
+                self.q0, self.q1, self.q2, self.q3,
+                self.wx, self.wy, self.wz,
+                self.ax, self.ay, self.az,
+                self.vx, self.vy, self.vz,
+                self.rx, self.ry, self.rz,
+                reserved0, reserved1, reserved2,
+                self.device_in_motion,
+                self.label_2,
+                temp0, temp1, temp2,
+                self.c,
+                self.d
+            ) = fields
 
-        self.label_1, self.label_2 = data[135], data[136]
+        self.roll, self.pitch, self.yaw = self.fs_q_to_euler_angles(
+            self.q0, self.q1, self.q2, self.q3, degrees=True
+        )
 
     def fs_q_to_euler_angles(self, q0, q1, q2, q3, degrees=False):
         estRoll = math.atan2(q0 * q1 + q2 * q3, 0.5 - q1**2 - q2**2)
